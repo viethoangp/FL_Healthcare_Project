@@ -1,9 +1,39 @@
+# Virtual Environment
 venv/
+ENV/
+env/
+.venv
 
+# Data folders (too large to push)
 data/
+results/
+
+# Image & output files
 *.csv
 *.png
 *.jpg
+*.log
 
+# Python
 __pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+*.so
+*.egg-info/
+
+# Build
+build/
+dist/
+develop-eggs/
+
+# IDE
 .DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Jupyter
+.ipynb_checkpoints/
