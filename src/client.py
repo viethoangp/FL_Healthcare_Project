@@ -102,7 +102,8 @@ class FlowerClient(fl.client.NumPyClient):
         Returns:
             List of parameter arrays
         """
-        return [param.cpu().detach().numpy() for param in self.model.parameters()]
+        # Return independent NumPy snapshots to avoid accidental shared-memory mutation.
+        return [param.detach().cpu().numpy().copy() for param in self.model.parameters()]
     
     def set_parameters(self, parameters: NDArrays) -> None:
         """
@@ -111,8 +112,11 @@ class FlowerClient(fl.client.NumPyClient):
         Args:
             parameters: List of parameter arrays from server
         """
-        for param, new_param in zip(self.model.parameters(), parameters):
-            param.data = torch.from_numpy(new_param).to(self.device)
+        with torch.no_grad():
+            for param, new_param in zip(self.model.parameters(), parameters):
+                # Clone input arrays so client training cannot mutate server-side NumPy buffers.
+                new_tensor = torch.tensor(new_param, device=self.device)
+                param.data.copy_(new_tensor)
     
     def fit(self, parameters: NDArrays, config: Dict) -> Tuple[NDArrays, int, Dict]:
         """

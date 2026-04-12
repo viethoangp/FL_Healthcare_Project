@@ -33,6 +33,7 @@ def compute_divergence(
         Divergence metric (float)
     """
     if not client_params_list:
+        logger.warning("compute_divergence: empty client_params_list")
         return 0.0
     
     num_clients = len(client_params_list)
@@ -95,11 +96,12 @@ def aggregate_fedsgd(
     client_sample_counts: List[int],
 ) -> List[np.ndarray]:
     """
-    FedSGD aggregation: server-side gradient descent using accumulated client updates.
+        FedSGD aggregation: server-side gradient-style update from client deltas.
     
-    Interprets client parameters as: w_k^t (latest client weights after local training)
-    Computes gradients as: g = -(w^t - w^{t-1}) / learning_rate
-    Applies server update: w^{t+1} = w^t - lr * g
+        We only receive updated client weights (not raw gradients), so we approximate
+        server gradient direction using parameter deltas:
+            delta_k = w_k - w_global
+            w_next = w_global + lr_server * sum_k(p_k * delta_k)
     
     Args:
         client_params_list: List of updated parameter lists from K clients
@@ -116,20 +118,18 @@ def aggregate_fedsgd(
     num_clients = len(client_params_list)
     total_samples = sum(client_sample_counts)
     
-    # Compute weighted average of client updates (gradients)
+    # Start from current global parameters and apply weighted delta step.
     aggregated = [np.copy(param) for param in global_params]
     
     for client_idx, client_params in enumerate(client_params_list):
         weight = client_sample_counts[client_idx] / total_samples
         
-        for i, (client_param, global_param, agg_param) in enumerate(
-            zip(client_params, global_params, aggregated)
+        for i, (client_param, global_param) in enumerate(
+            zip(client_params, global_params)
         ):
-            # Gradient = (old - new) / lr (negative of update direction)
-            # But we want to move in direction of update, so:
-            # update = (new - old) = client_param - global_param
+            # Move toward client updates (do not invert update direction).
             update = client_param - global_param
-            aggregated[i] -= (weight * learning_rate * update)
+            aggregated[i] += (weight * learning_rate * update)
     
     logger.debug(f"FedSGD: aggregated {num_clients} clients with lr={learning_rate}")
     return aggregated

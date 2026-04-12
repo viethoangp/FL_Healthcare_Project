@@ -108,7 +108,8 @@ def smoke_test_fl_pipeline(
         num_classes=2,
     )
     global_model = global_model.to(config.DEVICE)
-    global_params = [param.cpu().detach().numpy() for param in global_model.parameters()]
+    # Keep server parameters as immutable snapshots for each round comparison.
+    global_params = [param.detach().cpu().numpy().copy() for param in global_model.parameters()]
     logger.info("✓ Global model initialized\n")
     
     # Phase 5: FL training loop
@@ -205,11 +206,22 @@ def smoke_test_fl_pipeline(
         avg_loss = total_loss / sum(sample_counts)
         loss_history.append(avg_loss)
         
+        # Extract epsilon from client metrics if DP is enabled
+        privacy_epsilon = None
+        if config.DP_ENABLED and client_results:
+            # Get epsilon from first client that has it
+            for _, _, metrics in client_results:
+                if 'epsilon' in metrics:
+                    privacy_epsilon = metrics['epsilon']
+                    break
+        
         logger.info(f"Round {round_num + 1} Summary:")
         logger.info(f"  Loss: {avg_loss:.4f}")
         logger.info(f"  Divergence: {divergence:.6f}")
         logger.info(f"  Algorithm: {algorithm_used}")
         logger.info(f"  Tau: {config.TAU_STATIC}")
+        if privacy_epsilon is not None:
+            logger.info(f"  Privacy: ε={privacy_epsilon:.4f}")
         
         # Log to CSV
         metrics_logger.log_round(
@@ -218,6 +230,7 @@ def smoke_test_fl_pipeline(
             divergence=divergence,
             tau=config.TAU_STATIC,
             algorithm=algorithm_used,
+            epsilon=privacy_epsilon,
             num_clients=len(client_results),
             split="train",
         )

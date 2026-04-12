@@ -51,6 +51,11 @@ def create_resnet50(
     
     # Freeze backbone if needed (only train FC)
     if freeze_backbone:
+        # Freeze all convolutional and batch norm layers in the backbone
+        for param in model.conv1.parameters():
+            param.requires_grad = False
+        for param in model.bn1.parameters():
+            param.requires_grad = False
         for param in model.layer1.parameters():
             param.requires_grad = False
         for param in model.layer2.parameters():
@@ -59,7 +64,7 @@ def create_resnet50(
             param.requires_grad = False
         for param in model.layer4.parameters():
             param.requires_grad = False
-        logger.info("ResNet50 backbone frozen (only FC layer trainable)")
+        logger.info("ResNet50 backbone frozen: conv1, bn1, layer1-4 (only FC layer trainable)")
     
     return model
 
