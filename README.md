@@ -166,11 +166,6 @@ data/
         └── Tuberculosis/
 ```
 
-**Alternative (Manual):** If Kaggle API download fails:
-1. Manually download the dataset from [Kaggle TB Chest X-ray](https://www.kaggle.com/datasets/nih-chest-xrays/)
-2. Extract to `data/tb/TB_Chest_Radiography_Database/`
-3. Run `python src/prepare_data.py` to organize and split
-
 ---
 
 ## 🏃‍♂️ How to Run the Federated Learning Pipeline
