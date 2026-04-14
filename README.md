@@ -89,7 +89,7 @@ Note: These folders are auto-generated and should be in `.gitignore` since they 
 ## ⚙️ Installation & Setup (Complete Guide for Others)
 
 ### Prerequisites
-- **Python 3.10+** (tested on 3.13)
+- **Python 3.10+** (recommended: 3.12 for Flower simulation with Ray)
 - **pip** (Python package manager)
 - **Git** (for cloning the repository)
 - **Kaggle API** (optional, only if you want to re-download raw dataset)
@@ -249,12 +249,12 @@ ROUNDS_CSV = RESULTS_DIR / "rounds.csv"
 
 ---
 
-## 📝 Citation & References
+## Citation & References
 
-**Baseline Paper:**
-> A privacy-enhanced framework for collaborative Big Data analysis in healthcare using adaptive federated learning aggregation. *[Original Authors, Year]*
+Haripriya, R., Khare, N., Pandey, M., and Biswas, S. A privacy-enhanced framework for collaborative big data analysis in healthcare using adaptive federated learning aggregation. Journal of Big Data, 12(1), 113, 2025. DOI: https://doi.org/10.1186/s40537-025-01169-8
 
-**Framework:**
-> Beutel, D. J., et al. (2024). Flower: A Friendly Federated Learning Research Framework. *arXiv:2007.14861*
+**Frameworks & Libraries:**
+- **Flower (Federated Learning):** https://flower.dev
+- **PyTorch:** Paszke et al., "PyTorch: An imperative style, high-performance deep learning library," NeurIPS 2019
 
 ---

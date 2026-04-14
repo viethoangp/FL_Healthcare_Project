@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 import numpy as np
 import flwr as fl
-from flwr.common import NDArrays, Scalar, FitRes, EvaluateRes, Parameters
+from flwr.common import NDArrays, Scalar, FitRes, EvaluateRes, Parameters, GetParametersIns
 from flwr.server.strategy import Strategy
 from flwr.server.client_manager import ClientManager
 from flwr.server.client_proxy import ClientProxy
@@ -82,11 +82,10 @@ class AdaptiveAggregationStrategy(Strategy):
         sample = client_manager.sample(1)
         if sample:
             client = sample[0]
-            params = client.get_parameters(
-                config={"config": "dummy"}
-            )
+            ins = GetParametersIns(config={})
+            res = client.get_parameters(ins, timeout=None, group_id=0)
             logger.info("Global parameters initialized from first client")
-            return params
+            return res.parameters
         
         logger.warning("No clients available for initialization")
         return None
@@ -103,13 +102,13 @@ class AdaptiveAggregationStrategy(Strategy):
         )
         sample = client_manager.sample(sample_size)
         
-        config = {
+        fit_config = {
             "server_round": server_round,
             "num_epochs": config.NUM_EPOCHS_PER_ROUND,
             "batch_size": config.BATCH_SIZE,
         }
         
-        fit_ins = fl.common.FitIns(parameters, config)
+        fit_ins = fl.common.FitIns(parameters, fit_config)
         
         return [(client, fit_ins) for client in sample]
     

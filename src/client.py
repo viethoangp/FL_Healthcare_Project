@@ -69,14 +69,20 @@ class FlowerClient(fl.client.NumPyClient):
         self.loss_fn = nn.CrossEntropyLoss()
         
         # Wrap with DP if enabled
-        if dp_enabled:
-            self.model, self.optimizer, self.dp_engine = wrap_model_with_dp(
-                self.model,
-                self.optimizer,
-                self.train_dataloader,
-                dp_enabled=True,
-            )
+        if dp_enabled and len(self.train_dataloader.dataset) > 0:
+            try:
+                self.model, self.optimizer, self.dp_engine = wrap_model_with_dp(
+                    self.model,
+                    self.optimizer,
+                    self.train_dataloader,
+                    dp_enabled=True,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to wrap model with DP: {e}. Disabling DP for this client.")
+                self.dp_engine = None
         else:
+            if dp_enabled and len(self.train_dataloader.dataset) == 0:
+                logger.warning(f"Client {client_id}: Empty dataset, skipping DP wrapping")
             self.dp_engine = None
         
         # Metrics

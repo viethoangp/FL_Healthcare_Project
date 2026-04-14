@@ -22,6 +22,7 @@ from flwr.common import FitRes, Parameters, Scalar
 
 import torch
 from torch.utils.data import DataLoader
+from PIL import Image
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).parent
@@ -29,12 +30,13 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 import config
 from src.prepare_data import prepare_tb_dataset, verify_prepared_dataset
-from src.data import TBChestXrayDataset, create_dataloaders
+from src.data import TBChestXrayDataset, create_dataloaders, get_train_transform, get_val_transform
 from src.partition import dirichlet_partition
 from src.models import get_model
 from src.client import FlowerClient
 from src.strategy import AdaptiveAggregationStrategy
 from src.evaluation import MetricsLogger, evaluate_model, print_metrics_summary
+from src.balancing import balance_client_dataset
 
 # Configure logging
 logging.basicConfig(
@@ -95,6 +97,7 @@ def partition_data(num_clients: int = config.NUM_CLIENTS_BASELINE):
     train_dataset = TBChestXrayDataset(
         root_dir=config.TB_ORGANIZED_ROOT,
         split="train",
+        transform=get_train_transform(),
     )
     
     logger.info(f"Training samples: {len(train_dataset)}")
@@ -125,6 +128,7 @@ def create_client_fn(
 ) -> Callable[[str], FlowerClient]:
     """
     Create client factory function for Flower simulation.
+    Apply SMOTE balancing to each client's training data.
     
     Args:
         partitions: List of client data partitions
@@ -136,26 +140,116 @@ def create_client_fn(
         Callable that creates a FlowerClient for a given client_id
     """
     
+    # Store synthetic images cache per client
+    synthetic_cache = {}
+    
     def client_fn(cid: str) -> fl.client.Client:
         """Create a client for the given client ID."""
+        nonlocal synthetic_cache
+        
         cid_int = int(cid)
         
         # Get client data indices
         client_indices = partitions[cid_int]
-        subset = torch.utils.data.Subset(train_dataset, client_indices)
+        
+        # Get image paths and labels for this client
+        client_samples = [train_dataset.samples[i] for i in client_indices]
+        client_paths = np.array([path for path, _ in client_samples])
+        client_labels = np.array([label for _, label in client_samples])
+        
+        # Handle empty datasets
+        if len(client_paths) == 0:
+            logger.warning(f"Client {cid}: No training data assigned (empty partition)")
+            balanced_paths = []
+            balanced_labels = []
+            balanced_indices = np.array([], dtype=int)
+            subset = torch.utils.data.Subset(train_dataset, balanced_indices)
+        else:
+            # Apply SMOTE to balance client's data
+            logger.info(f"Client {cid}: Applying SMOTE to balance training data...")
+            balanced_paths, balanced_labels, synthetic_images = balance_client_dataset(
+                client_paths.tolist(),
+                client_labels.tolist(),
+                random_state=42 + cid_int  # Different seed per client
+            )
+            
+            # Cache synthetic images for this client
+            if synthetic_images:
+                synthetic_cache[cid_int] = synthetic_images
+                logger.info(f"Client {cid}: Generated {len(synthetic_images)} synthetic images via SMOTE")
+            
+            logger.info(f"Client {cid}: Original samples: {len(client_paths)}, Balanced samples: {len(balanced_paths)}")
+            
+            # Create subset with balanced indices
+            # For original samples, use partition indices
+            # For synthetic samples, they'll be handled separately
+            original_count = len(client_paths)
+            balanced_indices = list(client_indices)  # Start with original indices
+            
+            # Add dummy indices for synthetic samples (they'll be intercepted in __getitem__)
+            num_synthetic = len(synthetic_images)
+            for i in range(num_synthetic):
+                # Use negative indices as markers for synthetic samples
+                balanced_indices.append(-(cid_int * 10000 + i + 1))  # Negative index to distinguish synthetic
+            
+            balanced_indices = np.array(balanced_indices, dtype=int)
+            
+            # Create a wrapper dataset that handles synthetic samples
+            class BalancedClientDataset(torch.utils.data.Dataset):
+                def __init__(self, base_dataset, balanced_idx, synthetic_dict, client_id):
+                    self.base_dataset = base_dataset
+                    self.balanced_idx = balanced_idx
+                    self.synthetic_dict = synthetic_dict
+                    self.client_id = client_id
+                    self.original_count = original_count
+                    
+                def __len__(self):
+                    return len(self.balanced_idx)
+                
+                def __getitem__(self, idx):
+                    orig_idx = self.balanced_idx[idx]
+                    
+                    # Check if this is a synthetic sample (negative index)
+                    if orig_idx < 0:
+                        synthetic_idx = -orig_idx - 1
+                        if self.client_id in self.synthetic_dict and synthetic_idx in self.synthetic_dict[self.client_id]:
+                            # Get synthetic image array
+                            img_array = self.synthetic_dict[self.client_id][synthetic_idx]
+                            img = Image.fromarray(img_array)
+                            label = 1  # Synthetic samples are always TB (minority class)
+                        else:
+                            raise IndexError(f"Synthetic image not found: client={self.client_id}, idx={synthetic_idx}")
+                    else:
+                        # Original sample from dataset
+                        img, label = self.base_dataset[orig_idx]
+                        if not isinstance(img, torch.Tensor):
+                            img = get_train_transform()(img)
+                    
+                    return img, label
+            
+            subset = BalancedClientDataset(train_dataset, balanced_indices, synthetic_cache, cid_int)
         
         # Create dataloaders
-        train_loader = DataLoader(
-            subset,
-            batch_size=config.BATCH_SIZE,
-            shuffle=True,
-            num_workers=0,
-        )
+        if len(subset) == 0:
+            train_loader = DataLoader(
+                subset,
+                batch_size=config.BATCH_SIZE,
+                sampler=torch.utils.data.SequentialSampler(subset),
+                num_workers=0,
+            )
+        else:
+            train_loader = DataLoader(
+                subset,
+                batch_size=config.BATCH_SIZE,
+                shuffle=True,
+                num_workers=0,
+            )
         
         val_loader = DataLoader(
             TBChestXrayDataset(
                 root_dir=config.TB_ORGANIZED_ROOT,
                 split="val",
+                transform=get_val_transform(),
             ),
             batch_size=config.BATCH_SIZE,
             shuffle=False,
@@ -181,7 +275,7 @@ def create_client_fn(
             dp_enabled=dp_enabled,
         )
         
-        logger.debug(f"Client {cid}: {len(client_indices)} samples assigned")
+        logger.debug(f"Client {cid}: {len(subset)} balanced samples assigned")
         return client
     
     return client_fn
@@ -300,13 +394,23 @@ def run_simulation(
     # Get final parameters from strategy
     if strategy.final_parameters is not None:
         test_client.set_parameters(
-            fl.common.parameters_to_ndarrays(strategy.final_parameters),
-            config={}
+            fl.common.parameters_to_ndarrays(strategy.final_parameters)
         )
     else:
         logger.warning("No final parameters found from strategy")
     
-    final_model.load_state_dict(test_client.model.state_dict())
+    # Handle state_dict loaded from DP-wrapped model (has "_module" prefix)
+    state_dict = test_client.model.state_dict()
+    
+    # Remove "_module" prefix if present (from Opacus PrivacyEngine wrapper)
+    corrected_state_dict = {}
+    for key, value in state_dict.items():
+        if key.startswith("_module."):
+            corrected_state_dict[key[8:]] = value  # Remove "_module."
+        else:
+            corrected_state_dict[key] = value
+    
+    final_model.load_state_dict(corrected_state_dict, strict=False)
     final_model = final_model.to(config.DEVICE)
     
     test_loss, test_accuracy = evaluate_model(

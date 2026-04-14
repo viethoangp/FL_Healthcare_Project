@@ -31,7 +31,7 @@ TEST_SPLIT = 0.15
 # Per paper: "Optimal Hyperparameters: Batch Size = 32, Learning Rate = 0.01"
 BATCH_SIZE = 32
 LEARNING_RATE = 0.01
-NUM_EPOCHS_PER_ROUND = 1  # Local training epochs per FL round
+NUM_EPOCHS_PER_ROUND = 5  # Local training epochs per FL round (increased from 1 for better convergence)
 
 # ==================== FEDERATED LEARNING CONFIGURATION ====================
 # Baseline: static tau (Improvement #2 will make it dynamic)
