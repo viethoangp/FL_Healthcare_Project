@@ -31,7 +31,7 @@ TEST_SPLIT = 0.15
 # Per paper: "Optimal Hyperparameters: Batch Size = 32, Learning Rate = 0.01"
 BATCH_SIZE = 32
 LEARNING_RATE = 0.01
-NUM_EPOCHS_PER_ROUND = 5  # Restored for DP+GPU test closer to paper baseline
+NUM_EPOCHS_PER_ROUND = 2  # Restored for DP+GPU test closer to paper baseline
 NUM_ROUNDS = 10  # Number of federated learning rounds
 
 # ==================== FEDERATED LEARNING CONFIGURATION ====================
