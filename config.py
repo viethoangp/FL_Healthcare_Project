@@ -31,7 +31,8 @@ TEST_SPLIT = 0.15
 # Per paper: "Optimal Hyperparameters: Batch Size = 32, Learning Rate = 0.01"
 BATCH_SIZE = 32
 LEARNING_RATE = 0.01
-NUM_EPOCHS_PER_ROUND = 5  # Local training epochs per FL round (increased from 1 for better convergence)
+NUM_EPOCHS_PER_ROUND = 5  # Restored for DP+GPU test closer to paper baseline
+NUM_ROUNDS = 10  # Number of federated learning rounds
 
 # ==================== FEDERATED LEARNING CONFIGURATION ====================
 # Baseline: static tau (Improvement #2 will make it dynamic)
@@ -50,7 +51,7 @@ NUM_ROUNDS_FULL = 20  # Full run
 
 # ==================== DIFFERENTIAL PRIVACY CONFIGURATION ====================
 # Per paper: DP with Gaussian noise, sigma^2 = 0.5, epsilon = 2.5, ~96.5% accuracy
-DP_ENABLED = True
+DP_ENABLED = True  # Re-enabled for DP+GPU test
 DP_SIGMA_SQUARED = 0.5  # Variance of Gaussian noise
 DP_EPSILON = 2.5  # Privacy budget
 
@@ -76,7 +77,7 @@ METRICS_CSV = RESULTS_DIR / "baseline_metrics.csv"
 ROUNDS_CSV = RESULTS_DIR / "rounds.csv"  # Per-round metrics
 
 # ==================== DEVICE & PRECISION ====================
-DEVICE = "cpu"  # Or "cuda" if GPU available
+DEVICE = "cuda"  # Use GPU-enabled PyTorch build in .venv312
 DTYPE = "float32"  # PyTorch dtype
 
 # ==================== EXPERIMENT METADATA ====================

@@ -19,6 +19,37 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 
 
+def custom_collate_fn(batch):
+    """
+    Custom collate function for DataLoader.
+    Handles both tensor and PIL Image inputs, converting PIL to tensor if needed.
+    This is a fallback for compatibility with SMOTE augmented data.
+    """
+    from torchvision import transforms as T
+    
+    images, labels = zip(*batch)
+    
+    # Convert to tensor if needed
+    processed_images = []
+    pil_to_tensor = T.ToTensor()  # Fallback converter
+    
+    for img in images:
+        if isinstance(img, torch.Tensor):
+            processed_images.append(img)
+        elif isinstance(img, Image.Image):
+            # Convert PIL to tensor
+            logger.warning(f"Converting PIL image to tensor (should have been done by transform)")
+            tensor_img = pil_to_tensor(img)
+            processed_images.append(tensor_img)
+        else:
+            raise TypeError(f"Unexpected image type in collate: {type(img)}")
+    
+    images_tensor = torch.stack(processed_images)
+    labels_tensor = torch.tensor(labels, dtype=torch.long)
+    
+    return images_tensor, labels_tensor
+
+
 class TBChestXrayDataset(Dataset):
     """
     Custom PyTorch Dataset for TB Chest X-ray images.
@@ -33,6 +64,7 @@ class TBChestXrayDataset(Dataset):
         split: str = "train",
         transform: Optional[Callable] = None,
         target_transform: Optional[Callable] = None,
+        include_augmented: bool = False,
     ):
         """
         Args:
@@ -40,6 +72,7 @@ class TBChestXrayDataset(Dataset):
             split: One of 'train', 'val', 'test'
             transform: Optional image transformation pipeline
             target_transform: Optional label transformation
+            include_augmented: Whether to include pixel-space augmented samples from disk
         """
         self.root_dir = Path(root_dir)
         self.split = split
@@ -73,8 +106,25 @@ class TBChestXrayDataset(Dataset):
             for img_path in images:
                 self.samples.append((img_path, class_idx))
         
+        # For training split, optionally load augmented (legacy pixel-space SMOTE) samples.
+        if split == "train" and include_augmented:
+            augmented_tb_dir = split_dir / "Tuberculosis_augmented"
+            if augmented_tb_dir.exists():
+                augmented_images = sorted(augmented_tb_dir.glob("*.png"))
+                for img_path in augmented_images:
+                    self.samples.append((img_path, 1))  # class_idx for TB = 1
+                logger.info(
+                    f"Loaded {len(augmented_images)} augmented (SMOTE) TB images from "
+                    f"{augmented_tb_dir}"
+                )
+            else:
+                logger.info(
+                    f"No augmented TB data found at {augmented_tb_dir}. "
+                    f"Run prepare_data.py to generate SMOTE augmentation."
+                )
+        
         logger.info(
-            f"Loaded {len(self.samples)} images from {split} split "
+            f"Loaded {len(self.samples)} total images from {split} split "
             f"({split_dir})"
         )
     
@@ -172,6 +222,7 @@ def create_dataloaders(
         shuffle=True,
         num_workers=num_workers,
         pin_memory=pin_memory,
+        collate_fn=custom_collate_fn,  # Custom collate to handle both tensors and PIL images
     )
     val_loader = DataLoader(
         val_dataset,
@@ -179,6 +230,7 @@ def create_dataloaders(
         shuffle=False,
         num_workers=num_workers,
         pin_memory=pin_memory,
+        collate_fn=custom_collate_fn,  # Custom collate to handle both tensors and PIL images
     )
     test_loader = DataLoader(
         test_dataset,
@@ -186,6 +238,7 @@ def create_dataloaders(
         shuffle=False,
         num_workers=num_workers,
         pin_memory=pin_memory,
+        collate_fn=custom_collate_fn,  # Custom collate to handle both tensors and PIL images
     )
     
     logger.info(
