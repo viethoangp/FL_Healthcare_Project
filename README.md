@@ -6,8 +6,7 @@
 
 ## 📖 Overview
 This project implements a scalable, distributed Deep Learning framework for medical image classification using **Federated Learning (FL)**. 
-
-It is designed as a university capstone project for the **Big Data (IS405)** and **Distributed Databases (IS211)** courses. The architecture is heavily inspired by the baseline paper: *"A privacy-enhanced framework for collaborative Big Data analysis in healthcare using adaptive federated learning aggregation."*
+The architecture is heavily inspired by the baseline paper: *"A privacy-enhanced framework for collaborative Big Data analysis in healthcare using adaptive federated learning aggregation."*
 
 By utilizing the **Flower (`flwr`)** framework, this system allows multiple autonomous nodes (representing hospitals) to collaboratively train a global Convolutional Neural Network (CNN) without ever sharing raw, sensitive patient data with the central server.
 
