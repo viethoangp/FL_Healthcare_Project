@@ -63,7 +63,7 @@ DP_TARGET_EPSILON = DP_EPSILON
 # ==================== MODEL CONFIGURATION ====================
 # Transfer learning models per paper
 PRETRAINED_WEIGHTS = "IMAGENET1K_V1"  # ImageNet pre-trained weights
-FREEZE_BACKBONE = True  # Freeze feature extraction, train only FC layers
+FREEZE_BACKBONE = False  # Freeze feature extraction, train only FC layers
 
 # Model architectures
 MODELS_TO_TEST = ["resnet50", "vgg16"]  # Both per baseline requirement

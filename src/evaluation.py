@@ -11,6 +11,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
+from sklearn.metrics import classification_report
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +153,8 @@ def evaluate_model(
     total_loss = 0.0
     total_correct = 0
     total_samples = 0
+    all_preds = []
+    all_targets = []
     
     with torch.no_grad():
         for batch_x, batch_y in dataloader:
@@ -159,16 +162,30 @@ def evaluate_model(
             batch_y = batch_y.to(device)
             
             logits = model(batch_x)
+            preds = logits.argmax(1)
             loss = criterion(logits, batch_y)
             
             total_loss += loss.item() * len(batch_y)
-            total_correct += (logits.argmax(1) == batch_y).sum().item()
+            total_correct += (preds == batch_y).sum().item()
             total_samples += len(batch_y)
+
+            all_preds.extend(preds.cpu().numpy())
+            all_targets.extend(batch_y.cpu().numpy())
     
     model.train()
     
     avg_loss = total_loss / max(total_samples, 1)
     accuracy = total_correct / max(total_samples, 1)
+
+    print("\nCOMPREHENSIVE CLASSIFICATION REPORT")
+    print(
+        classification_report(
+            all_targets,
+            all_preds,
+            target_names=config.CLASS_NAMES,
+            digits=4,
+        )
+    )
     
     return avg_loss, accuracy
 
