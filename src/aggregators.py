@@ -13,24 +13,28 @@ logger = logging.getLogger(__name__)
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
+import config
 
 
 def compute_divergence(
     client_params_list: List[np.ndarray],
     global_params: np.ndarray,
+    eps: float = 1e-12,
 ) -> float:
     """
     Compute divergence metric δ_t between client models and global model.
-    Per paper: δ_t = (1/K) * sum(||w_t^k - w_{t-1}||_2)
-    
-    This is the average Euclidean distance between each client's weights and the global weights.
+    Per paper: δ_t = (1/K) * sum(||w_t^k - w_{t-1}||_2^2)
+
+    We compute the average squared L2 distance. Optionally normalize by the global
+    weight norm if DIVERGENCE_NORMALIZE is enabled. You can also reduce by the
+    number of parameters (mean) to keep scale aligned with tau.
     
     Args:
         client_params_list: List of K client parameter lists (each from get_parameters())
         global_params: Current global model parameters
     
     Returns:
-        Divergence metric (float)
+        Divergence metric (float), normalized by ||w_global||_2
     """
     if not client_params_list:
         logger.warning("compute_divergence: empty client_params_list")
@@ -38,20 +42,61 @@ def compute_divergence(
     
     num_clients = len(client_params_list)
     total_distance = 0.0
+
+    if config.DIVERGENCE_NORMALIZE:
+        global_sq = 0.0
+        for global_param in global_params:
+            global_sq += np.sum(global_param ** 2)
+        global_norm = np.sqrt(global_sq) + eps
+    else:
+        global_norm = 1.0
+
+    if config.DIVERGENCE_SCOPE == "head":
+        global_params = global_params[-2:]
+        client_params_list = [params[-2:] for params in client_params_list]
+
+    reduce_mode = config.DIVERGENCE_REDUCTION
     
     for client_params in client_params_list:
-        # Compute Euclidean distance between client and global weights
+        # Compute squared L2 distance between client and global weights
         distance = 0.0
         for client_param, global_param in zip(client_params, global_params):
             # Flatten to 1D and compute L2 norm
             diff = (client_param - global_param).flatten()
             distance += np.sum(diff ** 2)
-        
-        distance = np.sqrt(distance)
-        total_distance += distance
+
+        if reduce_mode == "mean":
+            param_count = 0
+            for global_param in global_params:
+                param_count += global_param.size
+            param_count = max(param_count, 1)
+            distance = distance / param_count
+
+        total_distance += distance / global_norm
     
     divergence = total_distance / num_clients
     return divergence
+
+
+def recommend_tau(
+    divergence_history: List[float],
+    quantile: float = 0.5,
+) -> float:
+    """
+    Recommend τ based on a quantile of observed divergence values.
+
+    Args:
+        divergence_history: List of divergence values from previous rounds
+        quantile: Quantile to use for recommendation (0.0-1.0)
+
+    Returns:
+        Suggested τ value
+    """
+    if not divergence_history:
+        return 0.0
+
+    values = np.array(divergence_history, dtype=np.float64)
+    return float(np.quantile(values, quantile))
 
 
 def aggregete_fedavg(

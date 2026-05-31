@@ -179,7 +179,7 @@ def create_client_fn(
         model = get_model(
             model_name=model_name,
             pretrained=True,
-            freeze_backbone=True,
+            freeze_backbone=config.FREEZE_BACKBONE,
             num_classes=2,
         )
         
@@ -275,13 +275,21 @@ def run_simulation(
     logger.info("PHASE 4: SIMULATION EXECUTION")
     logger.info("=" * 70 + "\n")
     
+    import time
+    start_time = time.time()
+    
     history = fl.simulation.start_simulation(
         client_fn=client_fn,
         num_clients=num_clients,
         config=fl.server.ServerConfig(num_rounds=num_rounds),
         strategy=strategy,
-        client_resources={"num_cpus": 1, "num_gpus": 0.25 if config.DEVICE == "cuda" else 0},
+        client_resources={
+            "num_cpus": 1,
+            "num_gpus": (1.0 if not config.FREEZE_BACKBONE else 0.25) if config.DEVICE == "cuda" else 0
+        },
     )
+    
+    execution_time = time.time() - start_time
     
     logger.info("\n" + "=" * 70)
     logger.info("PHASE 5: EVALUATION & LOGGING")
@@ -305,7 +313,7 @@ def run_simulation(
     final_model = get_model(
         model_name=model_name,
         pretrained=True,
-        freeze_backbone=False,  # Thaw for full fine-tune evaluation
+        freeze_backbone=config.FREEZE_BACKBONE,
         num_classes=2,
     )
     
@@ -334,7 +342,7 @@ def run_simulation(
     final_model.load_state_dict(corrected_state_dict, strict=False)
     final_model = final_model.to(config.DEVICE)
     
-    test_loss, test_accuracy = evaluate_model(
+    test_loss, test_accuracy, per_class = evaluate_model(
         model=final_model,
         dataloader=test_loader,
         device=config.DEVICE,
@@ -351,12 +359,13 @@ def run_simulation(
     algorithm_history = strategy.get_metrics()["algorithm_history"]
     loss_history = strategy.get_metrics()["loss_history"]
     
+    tau_history = strategy.divergence_history  # same length as loss_history
     for r in range(len(loss_history)):
         metrics_logger.log_round(
             round_num=r + 1,
             loss=loss_history[r] if r < len(loss_history) else 0,
             divergence=divergence_history[r] if r < len(divergence_history) else 0,
-            tau=config.TAU_STATIC,
+            tau=strategy.tau,  # log the final adaptive tau (best available proxy)
             algorithm=algorithm_history[r] if r < len(algorithm_history) else "N/A",
             num_clients=num_clients,
             split="train",
@@ -374,10 +383,17 @@ def run_simulation(
     test_results = {
         "Test Loss": test_loss,
         "Test Accuracy": test_accuracy,
+        "TB Recall": per_class.get("tb_recall"),
+        "TB F1": per_class.get("tb_f1"),
+        "TB Precision": per_class.get("tb_precision"),
+        "Normal Recall": per_class.get("normal_recall"),
+        "Normal F1": per_class.get("normal_f1"),
+        "Normal Precision": per_class.get("normal_precision"),
         "Model": model_name,
         "Clients": num_clients,
         "Rounds": num_rounds,
         "DP Enabled": dp_enabled,
+        "Execution time (s)": round(execution_time, 2),
     }
     metrics_logger.log_test_results(test_results)
     
@@ -386,9 +402,13 @@ def run_simulation(
         metrics={
             "Test Loss": test_loss,
             "Test Accuracy": test_accuracy,
+            "TB Recall": per_class.get("tb_recall"),
+            "TB F1": per_class.get("tb_f1"),
+            "TB Precision": per_class.get("tb_precision"),
             "Training Rounds": num_rounds,
             "Clients": num_clients,
             "DP Enabled": dp_enabled,
+            "Execution time (s)": round(execution_time, 2),
         },
         title="SIMULATION COMPLETE - FINAL METRICS"
     )

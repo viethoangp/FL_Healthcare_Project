@@ -11,7 +11,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from sklearn.metrics import classification_report
+from sklearn.metrics import classification_report, precision_recall_fscore_support
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +83,7 @@ class MetricsLogger:
             "split": split,
             "loss": round(loss, 6) if loss is not None else "",
             "accuracy": round(accuracy, 6) if accuracy is not None else "",
-            "divergence": round(divergence, 6) if divergence is not None else "",
+            "divergence": round(divergence, 10) if divergence is not None else "",
             "tau": round(tau, 6) if tau is not None else "",
             "algorithm": algorithm or "",
             "epsilon": round(epsilon, 6) if epsilon is not None else "",
@@ -145,7 +145,7 @@ def evaluate_model(
         device: Device to evaluate on
     
     Returns:
-        Tuple of (loss, accuracy)
+        Tuple of (loss, accuracy, per_class_metrics)
     """
     model.eval()
     criterion = nn.CrossEntropyLoss()
@@ -177,6 +177,22 @@ def evaluate_model(
     avg_loss = total_loss / max(total_samples, 1)
     accuracy = total_correct / max(total_samples, 1)
 
+    precision, recall, f1, _ = precision_recall_fscore_support(
+        all_targets,
+        all_preds,
+        average=None,
+        labels=[0, 1],
+        zero_division=0,
+    )
+    per_class_metrics = {
+        "normal_precision": float(precision[0]),
+        "normal_recall": float(recall[0]),
+        "normal_f1": float(f1[0]),
+        "tb_precision": float(precision[1]),
+        "tb_recall": float(recall[1]),
+        "tb_f1": float(f1[1]),
+    }
+
     print("\nCOMPREHENSIVE CLASSIFICATION REPORT")
     print(
         classification_report(
@@ -187,7 +203,7 @@ def evaluate_model(
         )
     )
     
-    return avg_loss, accuracy
+    return avg_loss, accuracy, per_class_metrics
 
 
 def print_metrics_summary(

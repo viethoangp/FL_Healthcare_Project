@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
-from src.aggregators import aggregate_adaptive, compute_divergence
+from src.aggregators import aggregate_adaptive, compute_divergence, recommend_tau
 
 
 class AdaptiveAggregationStrategy(Strategy):
@@ -142,6 +142,17 @@ class AdaptiveAggregationStrategy(Strategy):
         # Compute divergence
         divergence = compute_divergence(client_weights, self.global_params)
         self.divergence_history.append(divergence)
+
+        if server_round >= config.TAU_CALIBRATION_WARMUP:
+            suggested_tau = recommend_tau(
+                self.divergence_history,
+                quantile=config.TAU_CALIBRATION_QUANTILE,
+            )
+            self.tau = suggested_tau
+            logger.info(
+                f"Tau calibration: updated tau={self.tau:.6f} "
+                f"(quantile={config.TAU_CALIBRATION_QUANTILE})"
+            )
         
         # Aggregate with adaptive strategy
         aggregated, algorithm_used, div = aggregate_adaptive(

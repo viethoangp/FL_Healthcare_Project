@@ -122,7 +122,10 @@ class FlowerClient(fl.client.NumPyClient):
         
         # Get training config (epochs, batch size, etc.)
         num_epochs = config.get("num_epochs", config.get("local_epoch", 1))
-        avg_loss, num_samples_trained = self._fit_feature_smote(num_epochs)
+        if self._is_backbone_frozen():
+            avg_loss, num_samples_trained = self._fit_feature_smote(num_epochs)
+        else:
+            avg_loss, num_samples_trained = self._fit_standard_weighted(num_epochs)
 
         self.training_loss_history.append(avg_loss)
         self.local_epochs_trained += num_epochs
@@ -151,6 +154,8 @@ class FlowerClient(fl.client.NumPyClient):
         total_loss = 0.0
         epoch_samples = 0
 
+        optimizer = optim.SGD(self.model.parameters(), lr=self.learning_rate, momentum=0.9)
+
         for epoch in range(num_epochs):
             epoch_loss = 0.0
             epoch_samples = 0
@@ -158,11 +163,11 @@ class FlowerClient(fl.client.NumPyClient):
             for batch_x, batch_y in self.train_dataloader:
                 batch_x, batch_y = batch_x.to(self.device), batch_y.to(self.device)
 
-                self.optimizer.zero_grad()
+                optimizer.zero_grad()
                 logits = self.model(batch_x)
                 loss = self.loss_fn(logits, batch_y)
                 loss.backward()
-                self.optimizer.step()
+                optimizer.step()
 
                 batch_loss = loss.item() * len(batch_y)
                 epoch_loss += batch_loss
@@ -177,6 +182,108 @@ class FlowerClient(fl.client.NumPyClient):
 
         avg_loss = total_loss / max(num_epochs, 1)
         return avg_loss, epoch_samples
+
+    def _is_backbone_frozen(self) -> bool:
+        """Return True if backbone parameters are frozen (no gradients)."""
+        base_model = self.model._module if hasattr(self.model, "_module") else self.model
+
+        if hasattr(base_model, "fc"):
+            backbone_modules = [
+                base_model.conv1,
+                base_model.bn1,
+                base_model.layer1,
+                base_model.layer2,
+                base_model.layer3,
+                base_model.layer4,
+            ]
+            backbone_params = [p for m in backbone_modules for p in m.parameters()]
+            return all(not p.requires_grad for p in backbone_params)
+
+        if hasattr(base_model, "features"):
+            return all(not p.requires_grad for p in base_model.features.parameters())
+
+        return False
+
+    def _fit_standard_weighted(self, num_epochs: int) -> Tuple[float, int]:
+        """Train full model with class-weighted loss from local label distribution."""
+        self.last_privacy_metrics = {}
+        self.model.train()
+
+        class_counts = np.zeros(2, dtype=np.int64)
+        for _, batch_y in self.train_dataloader:
+            class_counts += np.bincount(batch_y.detach().cpu().numpy(), minlength=2)
+
+        num_samples = int(class_counts.sum())
+        if num_samples == 0:
+            logger.warning(f"Client {self.client_id}: empty local dataset, skipping fit")
+            return 0.0, 0
+
+        if class_counts.min() > 0:
+            weights = class_counts.sum() / (2.0 * class_counts.astype(np.float64))
+            weight_tensor = torch.tensor(weights, dtype=torch.float32, device=self.device)
+            loss_fn = nn.CrossEntropyLoss(weight=weight_tensor)
+        else:
+            loss_fn = nn.CrossEntropyLoss()
+
+        optimizer = optim.SGD(self.model.parameters(), lr=self.learning_rate, momentum=0.9)
+
+        train_loader = self.train_dataloader
+        train_model = self.model
+        privacy_engine = None
+
+        if self.dp_enabled and num_samples > 0:
+            try:
+                privacy_engine = PrivacyEngine()
+                train_model, optimizer, train_loader = privacy_engine.make_private(
+                    module=self.model,
+                    optimizer=optimizer,
+                    data_loader=self.train_dataloader,
+                    noise_multiplier=config.DP_NOISE_MULTIPLIER,
+                    max_grad_norm=config.DP_MAX_GRAD_NORM,
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Client {self.client_id}: DP wrap failed, continue without DP for this round: {e}"
+                )
+                train_model = self.model
+                privacy_engine = None
+
+        total_loss = 0.0
+
+        for epoch in range(num_epochs):
+            epoch_loss_sum = 0.0
+            epoch_seen = 0
+
+            for batch_x, batch_y in train_loader:
+                batch_x = batch_x.to(self.device)
+                batch_y = batch_y.to(self.device)
+
+                optimizer.zero_grad()
+                logits = train_model(batch_x)
+                loss = loss_fn(logits, batch_y)
+                loss.backward()
+                optimizer.step()
+
+                batch_count = batch_y.size(0)
+                epoch_loss_sum += loss.item() * batch_count
+                epoch_seen += batch_count
+
+            epoch_loss = epoch_loss_sum / max(epoch_seen, 1)
+            total_loss += epoch_loss
+            logger.info(
+                f"Client {self.client_id}, Epoch {epoch + 1}/{num_epochs} (weighted): loss={epoch_loss:.4f}"
+            )
+
+        if privacy_engine is not None:
+            delta = 1e-5
+            try:
+                epsilon = float(privacy_engine.accountant.get_epsilon(delta=delta))
+                self.last_privacy_metrics = {"epsilon": epsilon, "delta": delta}
+            except Exception as e:
+                logger.warning(f"Client {self.client_id}: failed to compute epsilon after DP training: {e}")
+
+        avg_loss = total_loss / max(num_epochs, 1)
+        return avg_loss, num_samples
 
     def _extract_resnet_features(self, x: torch.Tensor) -> torch.Tensor:
         """Extract 2048-d features from ResNet50 before final FC layer."""
@@ -235,12 +342,27 @@ class FlowerClient(fl.client.NumPyClient):
 
         logger.info(f"Client {self.client_id} - Before SMOTE: {np.bincount(y_labels, minlength=2)}")
 
-        try:
-            smote = SMOTE(random_state=42)
-            X_resampled, y_resampled = smote.fit_resample(X_feats, y_labels)
-            logger.info(f"Client {self.client_id} - After SMOTE: {np.bincount(y_resampled, minlength=2)}")
-        except Exception as e:
-            logger.warning(f"Client {self.client_id}: skip SMOTE due to tiny local data/non-IID partition: {e}")
+        unique_cls, cls_counts = np.unique(y_labels, return_counts=True)
+        min_count = int(cls_counts.min()) if len(unique_cls) == 2 else 0
+
+        if len(unique_cls) == 2 and min_count >= 2:
+            k_neighbors = min(5, min_count - 1)
+            try:
+                smote = SMOTE(random_state=42, k_neighbors=k_neighbors)
+                X_resampled, y_resampled = smote.fit_resample(X_feats, y_labels)
+                logger.info(
+                    f"Client {self.client_id} - After SMOTE: {np.bincount(y_resampled, minlength=2)}"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Client {self.client_id}: SMOTE failed ({e}), using original data"
+                )
+                X_resampled, y_resampled = X_feats, y_labels
+        else:
+            logger.warning(
+                f"Client {self.client_id}: Skipping SMOTE - classes={len(unique_cls)}, "
+                f"min_count={min_count} (need >= 2 samples per class)"
+            )
             X_resampled, y_resampled = X_feats, y_labels
 
         # Create balanced feature dataloader on CPU, move to device in training loop.
