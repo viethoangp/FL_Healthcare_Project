@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, Subset, TensorDataset
-from imblearn.over_sampling import SMOTE
+from imblearn.over_sampling import SMOTE, BorderlineSMOTE
 from opacus import PrivacyEngine
 import flwr as fl
 from flwr.common import NDArrays, Scalar
@@ -348,14 +348,38 @@ class FlowerClient(fl.client.NumPyClient):
         if len(unique_cls) == 2 and min_count >= 2:
             k_neighbors = min(5, min_count - 1)
             try:
-                smote = SMOTE(random_state=42, k_neighbors=k_neighbors)
-                X_resampled, y_resampled = smote.fit_resample(X_feats, y_labels)
+                smote_method = getattr(config, "SMOTE_METHOD", "smote")
+                if smote_method == "borderline":
+                    # Borderline-SMOTE: only synthesizes samples near the decision boundary
+                    # m_neighbors looks at ALL samples, so bound by total samples, not min_count
+                    m_neighbors = min(10, len(X_feats) - 1)
+                    try:
+                        resampler = BorderlineSMOTE(
+                            random_state=42,
+                            k_neighbors=k_neighbors,
+                            m_neighbors=m_neighbors,
+                            kind="borderline-1",
+                        )
+                        X_resampled, y_resampled = resampler.fit_resample(X_feats, y_labels)
+                        method_name = "BorderlineSMOTE"
+                    except ValueError as ve:
+                        # If BorderlineSMOTE fails (e.g. all minority samples are noise), fallback to vanilla
+                        logger.warning(f"Client {self.client_id}: BorderlineSMOTE failed ({ve}), falling back to vanilla SMOTE")
+                        resampler = SMOTE(random_state=42, k_neighbors=k_neighbors)
+                        X_resampled, y_resampled = resampler.fit_resample(X_feats, y_labels)
+                        method_name = "SMOTE (Fallback)"
+                else:
+                    # Vanilla SMOTE: synthesizes samples across entire minority class space
+                    resampler = SMOTE(random_state=42, k_neighbors=k_neighbors)
+                    X_resampled, y_resampled = resampler.fit_resample(X_feats, y_labels)
+                    method_name = "SMOTE"
+
                 logger.info(
-                    f"Client {self.client_id} - After SMOTE: {np.bincount(y_resampled, minlength=2)}"
+                    f"Client {self.client_id} - After {method_name}: {np.bincount(y_resampled, minlength=2)}"
                 )
             except Exception as e:
                 logger.warning(
-                    f"Client {self.client_id}: SMOTE failed ({e}), using original data"
+                    f"Client {self.client_id}: Resampling failed ({e}), using original data"
                 )
                 X_resampled, y_resampled = X_feats, y_labels
         else:

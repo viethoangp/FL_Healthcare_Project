@@ -63,7 +63,9 @@ class AdaptiveAggregationStrategy(Strategy):
         # Tracking metrics
         self.round = 0
         self.divergence_history = []
-        self.algorithm_history = []  # Track which algorithm was used per round
+        self.tau_history = []          # tau used per round
+        self.epsilon_history = []      # epsilon per round
+        self.algorithm_history = []    # Track which algorithm was used per round
         self.loss_history = []
         self.val_acc_history = []
         self.final_parameters = None  # Track final aggregated parameters
@@ -174,6 +176,8 @@ class AdaptiveAggregationStrategy(Strategy):
         avg_loss = total_loss / sum(sample_counts) if sample_counts else 0
         self.loss_history.append(avg_loss)
         
+        self.tau_history.append(self.tau)   # record tau used this round
+        
         # Aggregate privacy metrics if available
         privacy_metrics = {}
         epsilon_values = [
@@ -181,7 +185,12 @@ class AdaptiveAggregationStrategy(Strategy):
             for _, fit_res in results
         ]
         if any(e != float('inf') for e in epsilon_values):
-            privacy_metrics["epsilon"] = min(epsilon_values)
+            valid_eps = [e for e in epsilon_values if e != float('inf')]
+            round_epsilon = min(valid_eps)
+            privacy_metrics["epsilon"] = round_epsilon
+            self.epsilon_history.append(round_epsilon)
+        else:
+            self.epsilon_history.append(None)
         
         metrics = {
             "loss": avg_loss,
@@ -269,6 +278,8 @@ class AdaptiveAggregationStrategy(Strategy):
         """Return aggregated metrics history."""
         return {
             "divergence_history": self.divergence_history,
+            "tau_history": self.tau_history,
+            "epsilon_history": self.epsilon_history,
             "algorithm_history": self.algorithm_history,
             "loss_history": self.loss_history,
             "val_acc_history": self.val_acc_history,

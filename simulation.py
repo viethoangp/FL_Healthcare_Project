@@ -145,13 +145,18 @@ def create_client_fn(
         client_indices = partitions[cid_int]
         subset = torch.utils.data.Subset(train_dataset, client_indices)
         
-        # Handle empty datasets
+        # Adaptive batch size: reduce when partial unfreeze + DP to prevent RAM overflow
+        # Opacus computes per-sample gradients for trainable params - much more memory hungry
+        if config.FREEZE_BACKBONE == "partial" and dp_enabled:
+            effective_batch_size = min(8, config.BATCH_SIZE)  # safe for Opacus + layer4 gradients
+        else:
+            effective_batch_size = config.BATCH_SIZE
+        
         if len(subset) == 0:
             logger.warning(f"Client {cid}: No training data assigned (empty partition)")
-            # Create dataloaders with SequentialSampler for empty data
             train_loader = DataLoader(
                 subset,
-                batch_size=config.BATCH_SIZE,
+                batch_size=effective_batch_size,
                 sampler=torch.utils.data.SequentialSampler(subset),
                 num_workers=0,
             )
@@ -159,7 +164,7 @@ def create_client_fn(
             # Create dataloaders
             train_loader = DataLoader(
                 subset,
-                batch_size=config.BATCH_SIZE,
+                batch_size=effective_batch_size,
                 shuffle=True,
                 num_workers=0,
             )
@@ -278,6 +283,15 @@ def run_simulation(
     import time
     start_time = time.time()
     
+    # Adaptive client resources:
+    # - freeze=True  → parallel (0.25 GPU per client, fast)
+    # - freeze=partial/False → sequential (1.0 GPU per client, prevents RAM overflow from Opacus)
+    is_full_freeze = (config.FREEZE_BACKBONE is True)
+    if config.DEVICE == "cuda":
+        gpu_per_client = 0.25 if is_full_freeze else 1.0
+    else:
+        gpu_per_client = 0
+    
     history = fl.simulation.start_simulation(
         client_fn=client_fn,
         num_clients=num_clients,
@@ -285,7 +299,7 @@ def run_simulation(
         strategy=strategy,
         client_resources={
             "num_cpus": 1,
-            "num_gpus": (1.0 if not config.FREEZE_BACKBONE else 0.25) if config.DEVICE == "cuda" else 0
+            "num_gpus": gpu_per_client,
         },
     )
     
@@ -358,15 +372,17 @@ def run_simulation(
     divergence_history = strategy.get_metrics()["divergence_history"]
     algorithm_history = strategy.get_metrics()["algorithm_history"]
     loss_history = strategy.get_metrics()["loss_history"]
-    
-    tau_history = strategy.divergence_history  # same length as loss_history
+    tau_history = strategy.get_metrics()["tau_history"]
+    epsilon_history = strategy.get_metrics()["epsilon_history"]
+
     for r in range(len(loss_history)):
         metrics_logger.log_round(
             round_num=r + 1,
             loss=loss_history[r] if r < len(loss_history) else 0,
             divergence=divergence_history[r] if r < len(divergence_history) else 0,
-            tau=strategy.tau,  # log the final adaptive tau (best available proxy)
+            tau=tau_history[r] if r < len(tau_history) else config.TAU_STATIC,
             algorithm=algorithm_history[r] if r < len(algorithm_history) else "N/A",
+            epsilon=epsilon_history[r] if r < len(epsilon_history) else None,
             num_clients=num_clients,
             split="train",
         )
@@ -396,6 +412,11 @@ def run_simulation(
         "Execution time (s)": round(execution_time, 2),
     }
     metrics_logger.log_test_results(test_results)
+    
+    # Save final model weights for visualization (confusion matrix)
+    model_save_path = config.RESULTS_DIR / "final_model.pt"
+    torch.save(corrected_state_dict, model_save_path)
+    logger.info(f"✓ Final model weights saved to {model_save_path}")
     
     # Print summary
     print_metrics_summary(
@@ -453,10 +474,52 @@ if __name__ == "__main__":
         action="store_true",
         help="Disable differential privacy"
     )
+    parser.add_argument(
+        "--smote-method",
+        type=str,
+        default=None,
+        choices=["smote", "borderline"],
+        help="Oversampling method: 'smote' (vanilla) or 'borderline' (Borderline-SMOTE). Default from config."
+    )
+    parser.add_argument(
+        "--fixed-tau",
+        action="store_true",
+        default=False,
+        help="Disable adaptive tau: keep tau fixed at TAU_STATIC=0.10 for all rounds (baseline mode)"
+    )
+    parser.add_argument(
+        "--experiment-name",
+        type=str,
+        default=None,
+        help="Name for this experiment run (e.g. TH1, TH2). Results saved to results/<name>/"
+    )
     
     args = parser.parse_args()
     # DP is enabled by config default, unless --no-dp is specified
     dp_enabled = config.DP_ENABLED and not args.no_dp
+    
+    # Override SMOTE method if specified via CLI
+    if args.smote_method is not None:
+        config.SMOTE_METHOD = args.smote_method
+    
+    # Fixed tau: disable adaptive calibration by pushing warmup beyond num_rounds
+    if args.fixed_tau:
+        config.TAU_CALIBRATION_WARMUP = 99999  # never trigger adaptive tau
+        config.SMOTE_METHOD = getattr(args, 'smote_method', None) or config.SMOTE_METHOD
+    
+    # Experiment output directory
+    if args.experiment_name:
+        config.RESULTS_DIR = config.PROJECT_ROOT / "results" / args.experiment_name
+        config.RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    
+    print(f"\n{'='*60}")
+    print(f"  Experiment    : {args.experiment_name or 'default'}")
+    print(f"  SMOTE Method  : {config.SMOTE_METHOD}")
+    print(f"  Adaptive Tau  : {'DISABLED (fixed τ=0.10)' if args.fixed_tau else 'ENABLED'}")
+    print(f"  DP Enabled    : {dp_enabled}")
+    print(f"  Rounds        : {args.num_rounds}")
+    print(f"  Results Dir   : {config.RESULTS_DIR}")
+    print(f"{'='*60}\n")
     
     # Run simulation
     history, test_loss, test_acc = run_simulation(

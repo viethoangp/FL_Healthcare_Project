@@ -58,41 +58,74 @@ def dirichlet_partition(
         class_indices[class_label] = np.where(mask)[0]
         logger.info(f"  Class {class_label}: {len(class_indices[class_label])} samples")
     
-    # Sample from Dirichlet distribution for each class
-    # This gives us num_classes x num_clients probability matrix
-    # dirichlet_dist[c, k] = probability that client k gets samples from class c
-    if alpha > 0:
-        dirichlet_dist = np.random.dirichlet(
-            [alpha] * num_clients, size=num_classes
-        )  # Shape: (num_classes, num_clients)
-    else:
-        # Uniform distribution if alpha = 0
-        dirichlet_dist = np.ones((num_classes, num_clients)) / num_clients
-    
     # Initialize client partitions
     client_indices = [[] for _ in range(num_clients)]
     
-    # Assign samples from each class to clients based on Dirichlet probabilities
+    # ---------------------------------------------------------
+    # PAPER REPLICATION: Force Extreme Imbalance on Client 2, 5, 8
+    # ---------------------------------------------------------
+    enforce_paper = getattr(config, "ENFORCE_PAPER_IMBALANCE", True) and num_clients >= 9
+    if enforce_paper:
+        logger.info("  [!] ENFORCE_PAPER_IMBALANCE active: explicitly starving clients 2, 5, 8")
+        # Define explicit scarce counts: {client_id: {class_label: count}}
+        # Client 2: Severe TB imbalance (e.g. 25 Normal, 2 TB)
+        # Client 5: Severe Normal imbalance (e.g. 2 Normal, 25 TB)
+        # Client 8: Extreme scarcity (e.g. 3 Normal, 3 TB)
+        scarce_alloc = {
+            2: {0: 25, 1: 2},
+            5: {0: 2, 1: 25},
+            8: {0: 3, 1: 3}
+        }
+        
+        for cid, counts in scarce_alloc.items():
+            for cls_lbl, count in counts.items():
+                if cls_lbl in class_indices and count > 0:
+                    cls_samples = class_indices[cls_lbl]
+                    if len(cls_samples) >= count:
+                        # Extract the required samples
+                        assigned = cls_samples[:count]
+                        client_indices[cid].extend(assigned)
+                        # Remove them from the pool
+                        class_indices[cls_lbl] = cls_samples[count:]
+        
+        # We need to distribute the remaining to other clients.
+        # Create a boolean mask of clients that are NOT 2, 5, 8
+        active_clients = [i for i in range(num_clients) if i not in [2, 5, 8]]
+    else:
+        active_clients = list(range(num_clients))
+    # ---------------------------------------------------------
+
+    # Sample from Dirichlet distribution for each class
+    # for the active clients only
+    num_active = len(active_clients)
+    if alpha > 0:
+        dirichlet_dist = np.random.dirichlet(
+            [alpha] * num_active, size=num_classes
+        )  # Shape: (num_classes, num_active)
+    else:
+        dirichlet_dist = np.ones((num_classes, num_active)) / num_active
+    
+    # Assign remaining samples to active clients based on Dirichlet probabilities
     for class_label in unique_labels:
         class_samples = class_indices[class_label]
-        # Dirichlet probabilities for this class across clients
+        # Skip if no samples left
+        if len(class_samples) == 0:
+            continue
+            
         probabilities = dirichlet_dist[int(class_label)]
-        
-        # Shuffle samples within class
         np.random.shuffle(class_samples)
         
-        # Split according to probabilities
         cumulative_count = 0
-        for client_id in range(num_clients):
-            count = int(probabilities[client_id] * len(class_samples))
+        for idx, client_id in enumerate(active_clients):
+            count = int(probabilities[idx] * len(class_samples))
             client_indices[client_id].extend(
                 class_samples[cumulative_count : cumulative_count + count]
             )
             cumulative_count += count
         
-        # Assign remaining samples (due to rounding) to last client
+        # Assign remaining samples to last active client
         if cumulative_count < len(class_samples):
-            client_indices[num_clients - 1].extend(
+            client_indices[active_clients[-1]].extend(
                 class_samples[cumulative_count:]
             )
     

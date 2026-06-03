@@ -41,10 +41,14 @@ TAU_CALIBRATION_WARMUP = 2  # Rounds to observe before recommending tau
 TAU_CALIBRATION_QUANTILE = 0.5  # Use median divergence as suggested tau
 DIVERGENCE_NORMALIZE = False  # Paper-strict: use raw divergence scale
 DIVERGENCE_SCOPE = "all"  # 'head' (last layer) or 'all' (full model)
-DIVERGENCE_REDUCTION = "mean"  # 'sum' (paper raw) or 'mean' (per-parameter)
+DIVERGENCE_REDUCTION = "sum"  # 'sum' (paper raw) or 'mean' (per-parameter)
+
+# Oversampling method for handling class imbalance in local client training
+SMOTE_METHOD = "borderline"  # 'smote' (vanilla) or 'borderline' (Borderline-SMOTE)
 
 # Non-IID distribution
 DIRICHLET_ALPHA = 0.5  # Non-IID heterogeneity parameter
+ENFORCE_PAPER_IMBALANCE = True  # Force clients 2, 5, 8 to have severely less data and missing labels
 
 # Number of clients
 NUM_CLIENTS_BASELINE = 10  # Paper baseline
@@ -68,7 +72,7 @@ DP_TARGET_EPSILON = DP_EPSILON
 # ==================== MODEL CONFIGURATION ====================
 # Transfer learning models per paper
 PRETRAINED_WEIGHTS = "IMAGENET1K_V1"  # ImageNet pre-trained weights
-FREEZE_BACKBONE = True  # Freeze feature extraction, train only FC layers
+FREEZE_BACKBONE = True  # True=FC only (DP-safe), "partial"=layer4+FC (chỉ dùng với --no-dp)
 
 # Model architectures
 MODELS_TO_TEST = ["resnet50", "vgg16"]  # Both per baseline requirement

@@ -49,22 +49,25 @@ def create_resnet50(
     
     logger.info(f"ResNet50 modified: final FC layer = {in_features} -> {num_classes}")
     
-    # Freeze backbone if needed (only train FC)
+    # Freeze backbone if needed (only train FC, or layer4 + FC for "partial")
     if freeze_backbone:
-        # Freeze all convolutional and batch norm layers in the backbone
-        for param in model.conv1.parameters():
-            param.requires_grad = False
-        for param in model.bn1.parameters():
-            param.requires_grad = False
-        for param in model.layer1.parameters():
-            param.requires_grad = False
-        for param in model.layer2.parameters():
-            param.requires_grad = False
-        for param in model.layer3.parameters():
-            param.requires_grad = False
-        for param in model.layer4.parameters():
-            param.requires_grad = False
-        logger.info("ResNet50 backbone frozen: conv1, bn1, layer1-4 (only FC layer trainable)")
+        # Freeze early convolutional and batch norm layers
+        for param in model.conv1.parameters(): param.requires_grad = False
+        for param in model.bn1.parameters(): param.requires_grad = False
+        for param in model.layer1.parameters(): param.requires_grad = False
+        for param in model.layer2.parameters(): param.requires_grad = False
+        for param in model.layer3.parameters(): param.requires_grad = False
+        
+        if freeze_backbone == "partial":
+            logger.info("ResNet50 backbone partially frozen: conv1 to layer3 frozen (layer4 and FC trainable)")
+            # Fix Opacus DP error: BatchNorm doesn't support DP, so we must freeze all BN layers in layer4
+            for module in model.layer4.modules():
+                if isinstance(module, nn.BatchNorm2d):
+                    for param in module.parameters():
+                        param.requires_grad = False
+        else:
+            for param in model.layer4.parameters(): param.requires_grad = False
+            logger.info("ResNet50 backbone fully frozen: conv1 to layer4 frozen (only FC trainable)")
     
     return model
 
