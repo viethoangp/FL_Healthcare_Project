@@ -3,257 +3,103 @@
 ![Python](https://img.shields.io/badge/Python-3.8%2B-blue)
 ![PyTorch](https://img.shields.io/badge/PyTorch-Deep%20Learning-EE4C2C?logo=pytorch)
 ![Flower](https://img.shields.io/badge/Flower-Federated%20Learning-FFD21E)
+![Differential Privacy](https://img.shields.io/badge/Security-Differential%20Privacy-success)
 
 ## 📖 Overview
-This project implements a scalable, distributed Deep Learning framework for medical image classification using **Federated Learning (FL)**. 
-The architecture is heavily inspired by the baseline paper: *"A privacy-enhanced framework for collaborative Big Data analysis in healthcare using adaptive federated learning aggregation."*
+This project implements a scalable, distributed Deep Learning framework for medical image classification (Tuberculosis Detection) using **Federated Learning (FL)**. By utilizing the **Flower (`flwr`)** framework, this system allows multiple autonomous hospitals (Clients) to collaboratively train a global ResNet50 model without ever sharing raw, sensitive patient X-ray data with the central server.
 
-By utilizing the **Flower (`flwr`)** framework, this system allows multiple autonomous nodes (representing hospitals) to collaboratively train a global Convolutional Neural Network (CNN) without ever sharing raw, sensitive patient data with the central server.
+While inspired by recent baseline frameworks in healthcare FL, this project introduces **critical algorithmic improvements** to handle Extreme Non-IID (highly imbalanced) data distributions across hospitals, achieving state-of-the-art diagnostic accuracy while maintaining strict patient privacy.
 
-## ✨ Novel Contributions (Project Improvements)
-While based on the baseline paper, our team proposes three major algorithmic and systemic improvements:
-1. **Borderline-SMOTE Integration:** Upgrading from standard SMOTE to Borderline-SMOTE at the local client level. This focuses oversampling on "dangerous" borderline cases (critical in medical imaging) while avoiding noise generation, ensuring strict data privacy without cross-client leakage.
-2. **Dynamic Aggregation Threshold ($\tau$):** Replacing the static divergence threshold ($\tau=0.10$) with a dynamic $\tau$. The threshold dynamically adjusts based on the convergence rate ($\Delta$loss/round), optimizing the switch between FedAvg and FedSGD algorithms for better global accuracy.
-3. **Enhanced Scalability:** Expanding the federated network simulation from 10 to 15-20 autonomous clients. We address GPU memory constraints by implementing partial participation configurations.
+---
 
-## 🚀 Key Features
-* **Federated Architecture:** Robust Client-Server communication using the Flower framework.
-* **Deep Learning for Medical Imaging:** Utilizes Transfer Learning with **ResNet** and **VGG16** for high-accuracy image classification.
-* **Strict Data Privacy:** Raw X-ray and MRI images remain strictly localized at the hospital level. Only mathematical model weights are transmitted.
-* **Cloud Simulation Ready:** Fully compatible with Google Colab's GPU environment for simulating large-scale multi-client networks.
+## 🌟 Key Contributions & Improvements (Over Baseline)
 
-## 🗄️ Datasets
+### 1. Advanced Data Balancing: Feature-Space Borderline-SMOTE
+* **Baseline Flaw:** Traditional SMOTE generates noisy, ghostly synthetic images that degrade model convergence when applied directly to pixels.
+* **Our Solution:** Implemented **Borderline-SMOTE in the Latent Feature-Space**. The ResNet50 backbone acts as a feature extractor, and SMOTE is applied locally at each client to synthesize 2048-dimensional features exclusively near the decision boundaries. This prevents noise generation and significantly boosts the model's **Precision**.
 
-Current workspace data is configured for:
-1. [Tuberculosis (TB) Chest X-ray Database](https://www.kaggle.com/datasets/tawsifurrahman/tuberculosis-tb-chest-xray-dataset/data)
+### 2. Smart Server Aggregation: Dynamic Tau (DynTau)
+* **Baseline Flaw:** Using a static divergence threshold ($\tau=0.1$) to switch between FedAvg and FedSGD is ineffective for deep networks (like ResNet50) because the L2-norm divergence scale naturally shrinks over training rounds. This causes the system to blindly penalize clients and get "stuck" in FedSGD, causing massive communication overhead.
+* **Our Solution:** Proposed **Dynamic Tau (DynTau)**. The server calculates the *median divergence* of all clients dynamically in every round. This adaptive threshold seamlessly transitions the network between FedAvg (to save bandwidth) and FedSGD (to correct client drift), ensuring optimal convergence even under Extreme Non-IID constraints.
 
-Planned future extension datasets:
-1. [Brain Tumor Classification (MRI)](https://www.kaggle.com/datasets/sartajbhuvaji/brain-tumor-classification-mri)
-2. [Diabetic Retinopathy 224x224 (2019 Data)](https://www.kaggle.com/datasets/sovitrath/diabetic-retinopathy-224x224-2019-data)
+---
+
+## 🏆 Optimal Results
+
+The proposed architecture (**Borderline-SMOTE + DynTau** trained over 35 rounds) demonstrated exceptional performance on the completely unseen independent Test Set, outperforming standard baselines.
+
+### Model Performance Metrics (ResNet50)
+
+| Class | Metric | Proposed Method (TH5) | Note |
+| :--- | :--- | :---: | :--- |
+| **Overall** | **Accuracy** | **95.68%** | Highly accurate overall classification. |
+| **Tuberculosis** | **Precision** | **99.30%** | Exceptional precision (Extremely low False Positives). A TB positive prediction is almost absolutely correct. |
+| | **Recall** | **91.50%** | High sensitivity in detecting disease. |
+| | **F1-Score** | **95.25%** | Excellent balance between Precision and Recall. |
+| **Normal** | **Recall** | **99.43%** | Very high specificity. Safely identifies healthy patients, minimizing unnecessary medical procedures. |
+
+*(All metrics achieved with **Differential Privacy (DP)** enabled, proving the robustness of the privacy-utility tradeoff).*
+
+---
+
+## 🚀 Technologies Used
+* **Federated Architecture:** Robust Client-Server communication using the `flower` framework.
+* **Deep Learning:** `PyTorch` & `torchvision` (Transfer Learning with pre-trained ResNet50).
+* **Data Imbalance Handling:** `imbalanced-learn` (Borderline-SMOTE).
+* **Privacy:** `opacus` (Differential Privacy via Gaussian noise injection).
+* **Data Visualization:** `matplotlib`, `sklearn` (t-SNE, ROC/AUC, Confusion Matrices).
+
+---
 
 ## 📂 Project Structure
 ```text
 FL_Healthcare_Project/
-│
-├── config.py              # Central experiment configuration
-├── simulation.py          # Full Flower simulation entrypoint (baseline run)
-├── smoke_test.py          # Quick local validation script (2-round default)
+├── config.py              # Central experiment & hyperparameter configuration
+├── simulation.py          # Full Flower simulation entrypoint
 ├── requirements.txt       # Project dependencies
-├── README.md              # Project documentation
-│
 ├── src/
-│   ├── client.py           # Client-side training logic & parameter serialization
-│   ├── aggregators.py      # FedAvg, FedSGD aggregation & divergence computation
-│   ├── models.py           # ResNet50 model with backbone freeze
-│   ├── strategy.py         # Adaptive strategy (FedAvg/FedSGD switching)
-│   ├── data.py             # Dataset & DataLoader definitions
-│   ├── partition.py        # Non-IID client partition logic
-│   ├── prepare_data.py     # Raw TB -> organized train/val/test preprocessing
-│   ├── evaluation.py       # Training/evaluation utilities
-│   └── dp.py               # Differential Privacy integration
-│
-├── data/
-│   ├── tb/                 # RAW dataset root
-│   │   └── TB_Chest_Radiography_Database/
-│   │       ├── Normal/
-│   │       └── Tuberculosis/
-│   └── tb_organized/       # Preprocessed & organized data (auto-created)
-│       ├── train/          # Training data split (70% of total)
-│       │   ├── Normal/     # Normal X-ray images
-│       │   └── Tuberculosis/ # TB X-ray images
-│       ├── val/            # Validation data split (15% of total)
-│       │   ├── Normal/
-│       │   └── Tuberculosis/
-│       └── test/           # Test data split (15% of total)
-│           ├── Normal/
-│           └── Tuberculosis/
-│
-├── results/                # Output metrics & logs (auto-created)
-│   └── rounds.csv          # Per-round results: divergence, loss, accuracy, time
-│
-├── .gitignore              # Ignored files (venv, raw data, outputs)
-└── docs/
-    └── base_paper_summary.md  # Baseline paper reference & parameters
-```
-
-### Data Directory Details
-- **`data/tb/`** - Raw dataset root. Expected source path for preprocessing is `data/tb/TB_Chest_Radiography_Database/` with class folders `Normal/` and `Tuberculosis/`
-- **`data/tb_organized/`** - Created **after preprocessing** with organized folder structure:
-  - `train/` - 70% of data split by class (Normal, Tuberculosis)
-  - `val/` - 15% of data split by class
-  - `test/` - 15% of data split by class
-
-Note: These folders are auto-generated and should be in `.gitignore` since they contain preprocessed data.
-
-## ⚙️ Installation & Setup (Complete Guide for Others)
-
-### Prerequisites
-- **Python 3.10+** (recommended: 3.12 for Flower simulation with Ray)
-- **pip** (Python package manager)
-- **Git** (for cloning the repository)
-- **Kaggle API** (optional, only if you want to re-download raw dataset)
-- **~500MB disk space** for datasets (after preprocessing)
-
-### Step 1: Clone the Repository
-```bash
-git clone https://github.com/viethoangp/FL_Healthcare_Project.git
-cd FL_Healthcare_Project
-```
-
-### Step 2: Create & Activate Virtual Environment
-On **Windows**:
-```bash
-python -m venv venv
-venv\Scripts\activate
-```
-
-On **Linux/macOS**:
-```bash
-python3 -m venv venv
-source venv/bin/activate
-```
-
-### Step 3: Install Dependencies
-```bash
-pip install --upgrade pip
-pip install -r requirements.txt
-```
-
-**Expected packages:**
-- `flower==1.27.0` - Federated Learning framework
-- `torch==2.11.0` - Deep Learning backend (CPU version)
-- `torchvision==0.16.0` - Vision utilities & pretrained models
-- `scikit-learn>=1.6.0` - ML utilities & metrics
-- `opacus>=1.5.0` - Differential Privacy library
-- `pandas>=2.0.0` - Data manipulation
-
-### Step 4: Download Dataset from Kaggle
-
-Download the dataset zip file from Kaggle and extract it into the `data/` folder.
-After extraction, the folder should be:
-    data/tb/TB_Chest_Radiography_Database/...
-
-### Step 5: Prepare Dataset
-
-Run the preprocessing script after extracting the raw zip:
-
-python src/prepare_data.py
-
-This will:
-1. Read raw TB images from `data/tb/TB_Chest_Radiography_Database/`
-2. Resize images to 224x224 and convert to RGB
-3. Create organized train/val/test splits in `data/tb_organized/`
-4. Keep class folders in each split (Normal & Tuberculosis)
-5. Split ratio: 70% train / 15% validation / 15% test
-
-**After completion, your `data/` folder structure will be:**
-```
-data/
-├── tb/
-│   └── TB_Chest_Radiography_Database/
-│       ├── Normal/
-│       └── Tuberculosis/
-└── tb_organized/          # PROCESSED: organized splits by class
-    ├── train/
-    │   ├── Normal/
-    │   └── Tuberculosis/
-    ├── val/
-    │   ├── Normal/
-    │   └── Tuberculosis/
-    └── test/
-        ├── Normal/
-        └── Tuberculosis/
+│   ├── client.py           # Client training logic & Feature-space SMOTE
+│   ├── aggregators.py      # Dynamic Tau (DynTau) logic & FedAvg/FedSGD switching
+│   ├── models.py           # ResNet50 model instantiation & Backbone freezing
+│   ├── strategy.py         # Custom Flower Strategy implementation
+│   ├── data.py             # DataLoader & transform definitions
+│   ├── partition.py        # Dirichlet (Extreme Non-IID) client partition logic
+│   ├── prepare_data.py     # Preprocessing (Resize to 224x224, Train/Val/Test Split)
+│   ├── evaluation.py       # Metrics evaluation utilities
+│   ├── visualize.py        # Advanced charting (Bar charts, Line graphs)
+│   └── advanced_visualize.py # t-SNE and ROC/AUC visualizations
+├── data/                   # Datasets (Raw & Preprocessed splits)
+└── results/                # Output models, logs, and generated charts
 ```
 
 ---
 
-## 🏃‍♂️ How to Run the Federated Learning Pipeline
+## ⚙️ Installation & Usage
 
-### Option 1: Run Complete Baseline (Default - Recommended)
-Execute the full Flower simulation with 10 rounds:
+### 1. Setup Environment
+```bash
+git clone https://github.com/viethoangp/FL_Healthcare_Project.git
+cd FL_Healthcare_Project
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+```
 
+### 2. Prepare Dataset
+Download the TB Chest X-ray dataset and place it in `data/tb/TB_Chest_Radiography_Database/`. Then run preprocessing to split the data (Train 70%, Val 15%, Test 15%):
+```bash
+python src/prepare_data.py
+```
+
+### 3. Run the Federated Simulation
+Run the full simulation (default 10 rounds, or edit `config.py` for 35 rounds):
 ```bash
 python simulation.py --num-rounds 10 --model resnet50
 ```
 
-**What this does:**
-- Initializes 10 federated clients with local TB Chest X-ray data
-- Runs 10 communication rounds with FedAvg/FedSGD adaptive switching
-- Logs divergence metrics, loss, accuracy, and elapsed time per round
-- Exports results to `results/rounds.csv` with columns:
-  - `round`, `divergence`, `num_clients`, `global_loss`, `train_accuracy`, `test_accuracy`, `elapsed_time`, `epsilon` (if DP enabled)
-- Final test accuracy printed at pipeline completion
-
-
-### Option 2: Quick Sanity Test (2 Rounds)
-To quickly verify setup without full training:
-
+### 4. Generate Visualizations (For Reporting)
+To generate comprehensive comparison charts (Accuracy bars, Loss convergence, t-SNE, ROC):
 ```bash
-python smoke_test.py
+python src/visualize.py --compare results/TH1 results/TH2 results/TH3 results/TH4 results/TH5 --compare-labels "Baseline" "BorderSMOTE" "DynTau" "Proposed(10R)" "Proposed(35R)"
+python src/advanced_visualize.py
 ```
-
-**Runtime:** ~240 seconds (~4 minutes)
-
-### Option 3: Run with Differential Privacy (DP) Enabled
-For privacy-preserving federated learning with Gaussian noise injection:
-
-1. Edit `config.py`:
-   ```python
-   DP_ENABLED = True          # Enable DP
-   DP_EPSILON = 2.5           # Privacy budget per round
-   DP_SIGMA_SQUARED = 0.5     # Gaussian noise variance
-   ```
-
-2. Run pipeline:
-   ```bash
-   python simulation.py --num-rounds 10 --model resnet50
-   ```
-
-**Note:** DP reduces accuracy slightly; privacy-utility tradeoff is configurable via `/epsilon` and `/sigma`.
-
----
-
-## ⚙️ Configuration
-
-Edit `config.py` to customize:
-
-```python
-# Federated Learning
-NUM_CLIENTS_BASELINE = 10   # Number of hospital clients
-NUM_ROUNDS_BASELINE = 10    # Communication rounds
-BATCH_SIZE = 32             # Batch size per client
-LEARNING_RATE = 0.01        # SGD learning rate
-NUM_EPOCHS_PER_ROUND = 1    # Local epochs per round
-
-# Aggregation Strategy
-TAU_STATIC = 0.10           # τ: Switch FedAvg→FedSGD when divergence > τ
-
-# Model
-FREEZE_BACKBONE = True      # Freeze ResNet50 conv1, bn1, layer1-4
-MODELS_TO_TEST = ["resnet50", "vgg16"]
-
-# Dataset
-DIRICHLET_ALPHA = 0.5       # Non-IID distribution (lower α = more heterogeneous)
-RANDOM_SEED = 42            # Reproducibility
-
-# Privacy (Differential Privacy)
-DP_ENABLED = True           # Enable Gaussian noise injection
-DP_EPSILON = 2.5            # Privacy budget
-DP_SIGMA_SQUARED = 0.5      # Noise variance
-
-# Logging
-LOG_LEVEL = "INFO"          # DEBUG, INFO, WARNING, ERROR
-ROUNDS_CSV = RESULTS_DIR / "rounds.csv"
-```
-
----
-
-## Citation & References
-
-Haripriya, R., Khare, N., Pandey, M., and Biswas, S. A privacy-enhanced framework for collaborative big data analysis in healthcare using adaptive federated learning aggregation. Journal of Big Data, 12(1), 113, 2025. DOI: https://doi.org/10.1186/s40537-025-01169-8
-
-**Frameworks & Libraries:**
-- **Flower (Federated Learning):** https://flower.dev
-- **PyTorch:** Paszke et al., "PyTorch: An imperative style, high-performance deep learning library," NeurIPS 2019
-
----
