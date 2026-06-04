@@ -42,6 +42,15 @@ The proposed architecture (**Borderline-SMOTE + DynTau** trained over 35 rounds)
 
 ---
 
+## 🗄️ Datasets
+
+The simulation was trained and tested on the following open-source medical datasets. To prevent initial overfitting caused by the extreme class imbalance in the original dataset (3500 Normal vs 700 TB), we integrated an augmented TB dataset to provide a richer foundation before applying local Borderline-SMOTE.
+
+1. **Original TB Dataset:** [Tuberculosis (TB) Chest X-ray Database](https://www.kaggle.com/datasets/tawsifurrahman/tuberculosis-tb-chest-xray-dataset) (Contains ~3500 Normal and 700 TB images).
+2. **Augmented TB Dataset:** [Tuberculosis Augmented Images](https://www.kaggle.com/datasets/lavuluriliketh/tubeculosis-augmented-images) (Contains ~2440 augmented TB images to mitigate severe under-representation).
+
+---
+
 ## 🚀 Technologies Used
 * **Federated Architecture:** Robust Client-Server communication using the `flower` framework.
 * **Deep Learning:** `PyTorch` & `torchvision` (Transfer Learning with pre-trained ResNet50).
@@ -103,3 +112,13 @@ To generate comprehensive comparison charts (Accuracy bars, Loss convergence, t-
 python src/visualize.py --compare results/TH1 results/TH2 results/TH3 results/TH4 results/TH5 --compare-labels "Baseline" "BorderSMOTE" "DynTau" "Proposed(10R)" "Proposed(35R)"
 python src/advanced_visualize.py
 ```
+
+---
+
+## 📚 Citation & References
+
+- **Baseline Paper:** Haripriya, R., Khare, N., Pandey, M., and Biswas, S. *A privacy-enhanced framework for collaborative big data analysis in healthcare using adaptive federated learning aggregation.* Journal of Big Data, 12(1), 113, 2025. DOI: [https://doi.org/10.1186/s40537-025-01169-8](https://doi.org/10.1186/s40537-025-01169-8)
+
+**Frameworks & Libraries:**
+- **Flower (Federated Learning):** [https://flower.dev](https://flower.dev)
+- **PyTorch:** Paszke et al., "PyTorch: An imperative style, high-performance deep learning library," NeurIPS 2019
